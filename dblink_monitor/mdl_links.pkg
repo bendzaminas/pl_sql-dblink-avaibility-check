@@ -1,0 +1,276 @@
+CREATE OR REPLACE PACKAGE DBLINK_MONITOR.mdl_dblinks AUTHID DEFINER IS
+
+      modified_by_other EXCEPTION;
+      PRAGMA EXCEPTION_INIT(modified_by_other, -20001);
+
+      FUNCTION get(p_db_link_id IN dblinks.db_link_id%TYPE) RETURN dblinks%ROWTYPE;
+
+      FUNCTION get_db_link_id RETURN dblinks.db_link_id%TYPE;
+
+
+      PROCEDURE del(p_db_link_id IN dblinks.db_link_id%TYPE, p_auto_transaction IN BOOLEAN DEFAULT FALSE);
+
+      FUNCTION ins(p_rec IN dblinks%ROWTYPE,
+                  p_auto_transaction IN BOOLEAN DEFAULT FALSE) RETURN dblinks%ROWTYPE;
+
+      FUNCTION upd(p_db_link_id IN dblinks.db_link_id%TYPE,
+                  p_rec dblinks%ROWTYPE,
+                  p_auto_transaction IN BOOLEAN DEFAULT FALSE)
+       RETURN dblinks%ROWTYPE;
+
+END;
+/
+CREATE OR REPLACE PACKAGE BODY DBLINK_MONITOR.mdl_dblinks IS
+
+     FUNCTION get(p_db_link_id IN dblinks.db_link_id%TYPE) RETURN dblinks%ROWTYPE IS
+
+          CURSOR c(p_db_link_id IN dblinks.db_link_id%TYPE) IS
+               SELECT /*+ result_cache first_rows(1) */ t.*
+                 FROM dblinks t
+                WHERE t.db_link_id = p_db_link_id
+         AND rownum = 1;
+
+         l_rec dblinks%ROWTYPE;
+
+     BEGIN
+
+        DBMS_APPLICATION_INFO.set_action(action_name => 'getting');
+
+        OPEN c(p_db_link_id => p_db_link_id);
+        FETCH c
+             INTO l_rec;
+        CLOSE c;
+
+        IF l_rec.db_link_id IS NULL THEN
+             RAISE no_data_found;
+        END IF;
+
+        RETURN l_rec;
+
+     END;
+
+
+
+     FUNCTION get_db_link_id RETURN dblinks.db_link_id%TYPE IS
+
+          CURSOR c IS
+               SELECT db_link_id#.nextval
+                 FROM dual;
+
+          l_result dblinks.db_link_id%TYPE;
+
+     BEGIN
+
+        DBMS_APPLICATION_INFO.set_action(action_name => 'getting db_link_id');
+
+        OPEN c;
+        FETCH c
+             INTO l_result;
+        CLOSE c;
+
+        RETURN l_result;
+
+     END;
+
+
+
+     PROCEDURE no_autonomous_del(p_db_link_id IN dblinks.db_link_id%TYPE) IS
+
+     BEGIN
+
+        DBMS_APPLICATION_INFO.set_action(action_name => 'deleting no_autonomous_del');
+
+        DELETE /*+first_rows(1)*/
+         dblinks t
+         WHERE  t.db_link_id = p_db_link_id
+           AND rownum = 1;
+
+        IF SQL%NOTFOUND THEN
+           RAISE no_data_found;
+        END IF;
+
+     END;
+
+
+
+     PROCEDURE autonomous_del(p_db_link_id IN dblinks.db_link_id%TYPE) IS
+
+     PRAGMA AUTONOMOUS_TRANSACTION;
+
+     BEGIN
+
+        DBMS_APPLICATION_INFO.set_action(action_name => 'deleting autonomous_del');
+
+        no_autonomous_del(p_db_link_id => p_db_link_id);
+
+        COMMIT;
+
+     END;
+
+
+     PROCEDURE del(p_db_link_id IN dblinks.db_link_id%TYPE,
+                   p_auto_transaction IN BOOLEAN DEFAULT FALSE) IS
+
+     BEGIN
+
+        DBMS_APPLICATION_INFO.set_action(action_name => 'deleting del');
+
+        IF p_auto_transaction THEN
+
+           autonomous_del(p_db_link_id => p_db_link_id);
+
+        ELSE
+
+            no_autonomous_del(p_db_link_id => p_db_link_id);
+
+        END IF;
+
+     END;
+
+
+     FUNCTION no_autonomous_ins(p_rec IN dblinks %ROWTYPE) RETURN dblinks %ROWTYPE IS
+
+       l_rec dblinks %ROWTYPE;
+
+     BEGIN
+
+       DBMS_APPLICATION_INFO.set_action(action_name => ' inserting no_autonomous_ins ');
+
+       INSERT INTO dblinks t
+       VALUES p_rec
+       RETURNING t.db_link_id INTO l_rec.db_link_id;
+
+       RETURN get(p_db_link_id => l_rec.db_link_id);
+
+     END;
+
+
+     FUNCTION autonomous_ins(p_rec IN dblinks%ROWTYPE)
+     RETURN dblinks%ROWTYPE IS
+
+     PRAGMA AUTONOMOUS_TRANSACTION;
+
+        l_rec dblinks%ROWTYPE;
+
+     BEGIN
+        DBMS_APPLICATION_INFO.set_action(action_name => 'inserting autonomous_ins');
+
+        l_rec := no_autonomous_ins(p_rec => p_rec);
+
+        COMMIT;
+
+        RETURN l_rec;
+
+     END;
+
+
+     FUNCTION ins(p_rec IN dblinks%ROWTYPE,
+                   p_auto_transaction IN BOOLEAN DEFAULT FALSE) RETURN dblinks%ROWTYPE IS
+
+        l_rec dblinks%ROWTYPE;
+
+     BEGIN
+
+        DBMS_APPLICATION_INFO.set_action(action_name => 'inserting ins');
+
+        IF p_auto_transaction THEN
+
+          l_rec := autonomous_ins(p_rec => p_rec);
+
+        ELSE
+
+          l_rec := no_autonomous_ins(p_rec => p_rec);
+
+        END IF;
+
+        RETURN l_rec;
+
+     END;
+
+
+
+     FUNCTION no_autonomous_upd(p_db_link_id IN dblinks.db_link_id%TYPE,
+                  p_rec IN dblinks%ROWTYPE)
+     RETURN dblinks%ROWTYPE IS
+
+     l_old dblinks%ROWTYPE;
+     l_rec dblinks%ROWTYPE;
+
+     BEGIN
+
+        DBMS_APPLICATION_INFO.set_action(action_name => 'updating no_autonomous_upd');
+
+        l_old := get(p_db_link_id => p_db_link_id);
+
+        UPDATE dblinks t
+           SET ROW = p_rec
+         WHERE t.db_link_id = p_db_link_id
+        RETURNING t.number_of_times_modified, t.db_link_id INTO l_rec.number_of_times_modified, l_rec.db_link_id;
+
+
+        IF SQL%NOTFOUND THEN
+            RAISE no_data_found;
+        END IF;
+
+        IF l_old.number_of_times_modified + 1 != l_rec.number_of_times_modified THEN
+            ROLLBACK;
+            RAISE modified_by_other;
+        END IF;
+
+        RETURN get(p_db_link_id => l_rec.db_link_id);
+
+     END;
+
+
+
+    FUNCTION autonomous_upd(p_db_link_id IN dblinks.db_link_id%TYPE,
+                          p_rec                 IN dblinks%ROWTYPE)
+    RETURN dblinks%ROWTYPE IS
+
+    PRAGMA AUTONOMOUS_TRANSACTION;
+
+    l_rec dblinks%ROWTYPE;
+
+    BEGIN
+
+       DBMS_APPLICATION_INFO.set_action(action_name => 'updating autonomous_upd');
+
+       l_rec := no_autonomous_upd(p_db_link_id => p_db_link_id,
+                 p_rec                 => p_rec);
+
+       COMMIT;
+
+       RETURN l_rec;
+
+    END;
+
+
+      FUNCTION upd(p_db_link_id IN dblinks.db_link_id%TYPE,
+                  p_rec IN dblinks%ROWTYPE,
+                  p_auto_transaction IN BOOLEAN DEFAULT FALSE)
+        RETURN dblinks%ROWTYPE IS
+
+      BEGIN
+
+         DBMS_APPLICATION_INFO.set_action(action_name => 'updating upd');
+
+         IF p_auto_transaction THEN
+
+            RETURN autonomous_upd(p_db_link_id => p_db_link_id, p_rec => p_rec);
+
+         ELSE
+
+            RETURN no_autonomous_upd(p_db_link_id => p_db_link_id, p_rec => p_rec);
+
+         END IF;
+
+      END;
+
+
+
+    BEGIN
+
+         DBMS_APPLICATION_INFO.set_module(module_name => 'mdl_dblinks',
+                                          action_name => 'calling mdl_dblinks');
+
+    END;
