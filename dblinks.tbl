@@ -1,0 +1,57 @@
+-- Create table
+create table DBLINK_MONITOR.DBLINKS
+(
+  db_link_id               NUMBER not null,
+  owner                    VARCHAR2(30) not null,
+  db_link                  VARCHAR2(30) not null,
+  username                 VARCHAR2(30) not null,
+  active                   VARCHAR2(1) not null,
+  date_created             DATE default sysdate not null,
+  user_created             VARCHAR2(30) default user not null,
+  date_modified            DATE,
+  user_modified            VARCHAR2(30),
+  number_of_times_modified NUMBER default 0 not null,
+  last_check_date          DATE,
+  last_error               CLOB,
+  last_execution_time      NUMBER
+)
+tablespace DBLINK_MONITOR
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBLINK_MONITOR.DBLINKS
+  add constraint PK_DBLINKS primary key (DB_LINK_ID)
+  using index 
+  tablespace IDX_DBLINK_MONITOR
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+alter table DBLINK_MONITOR.DBLINKS
+  add constraint UK_DBLINKS_01 unique (OWNER, DB_LINK, USERNAME)
+  using index 
+  tablespace IDX_DBLINK_MONITOR
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
