@@ -1,0 +1,88 @@
+CREATE OR REPLACE PACKAGE DBLINK_MONITOR_API.mdl_dblinks AUTHID DEFINER IS
+
+  c_active    CONSTANT CHAR(1) := 'A';
+  c_notactive CONSTANT CHAR(1) := 'N';
+
+  FUNCTION find_valid_by_group_key_1(p_owner    IN dblink_monitor.v_dblinks.owner%TYPE,
+                                     p_db_link  IN dblink_monitor.v_dblinks.db_link%TYPE,
+                                     p_username IN dblink_monitor.v_dblinks.username%TYPE)
+
+   RETURN dblink_monitor.v_dblinks%ROWTYPE;
+
+  FUNCTION upd(p_db_link_id dblink_monitor.v_dblinks.db_link_id%TYPE,
+               p_rec        dblink_monitor.v_dblinks%ROWTYPE)
+    RETURN dblink_monitor.v_dblinks%ROWTYPE;
+
+  FUNCTION add(p_rec IN OUT NOCOPY dblink_monitor.v_dblinks%ROWTYPE)
+    RETURN dblink_monitor.v_dblinks%ROWTYPE;
+
+END;
+/
+CREATE OR REPLACE PACKAGE BODY DBLINK_MONITOR_API.mdl_dblinks IS
+
+  FUNCTION find_valid_by_group_key_1(p_owner    IN dblink_monitor.v_dblinks.owner%TYPE,
+                                     p_db_link  IN dblink_monitor.v_dblinks.db_link%TYPE,
+                                     p_username IN dblink_monitor.v_dblinks.username%TYPE)
+
+   RETURN dblink_monitor.v_dblinks%ROWTYPE IS
+
+    CURSOR c_tab(p_owner    IN dblink_monitor.v_dblinks.owner%TYPE,
+                 p_db_link  IN dblink_monitor.v_dblinks.db_link%TYPE,
+                 p_username IN dblink_monitor.v_dblinks.username%TYPE) IS
+      SELECT /*+ result_cache first_rows(1)*/
+       t.*
+        FROM dblink_monitor.v_dblinks t
+       WHERE t.owner = p_owner
+         AND t.db_link = p_db_link
+         AND t.username = p_username
+         AND rownum = 1;
+
+    l_result dblink_monitor.v_dblinks%ROWTYPE;
+
+  BEGIN
+
+    DBMS_APPLICATION_INFO.set_action(action_name => 'find_valid_by_group_key_');
+
+    OPEN c_tab(p_owner    => p_owner,
+               p_db_link  => p_db_link,
+               p_username => p_username);
+    FETCH c_tab
+      INTO l_result;
+    CLOSE c_tab;
+
+    RETURN l_result;
+
+  END;
+
+  FUNCTION upd(p_db_link_id dblink_monitor.v_dblinks.db_link_id%TYPE,
+               p_rec        dblink_monitor.v_dblinks%ROWTYPE)
+    RETURN dblink_monitor.v_dblinks%ROWTYPE IS
+
+  BEGIN
+
+    DBMS_APPLICATION_INFO.set_action(action_name => 'updating upd');
+    RETURN dblink_monitor.mdl_dblinks.upd(p_db_link_id       => p_db_link_id,
+                                          p_rec              => p_rec,
+                                          p_auto_transaction => TRUE);
+  END;
+
+  FUNCTION add(p_rec IN OUT NOCOPY dblink_monitor.v_dblinks%ROWTYPE)
+    RETURN dblink_monitor.v_dblinks%ROWTYPE IS
+
+    l_rec dblink_monitor.v_dblinks%ROWTYPE;
+
+  BEGIN
+
+    DBMS_APPLICATION_INFO.set_action(action_name => 'inserting add');
+
+    RETURN dblink_monitor.mdl_dblinks.ins(p_rec              => p_rec,
+                                          p_auto_transaction => TRUE);
+
+  END;
+
+BEGIN
+
+  DBMS_APPLICATION_INFO.set_module(module_name => 'mdl_dblinks',
+                                   action_name => 'calling mdl_dblinks');
+
+END;
