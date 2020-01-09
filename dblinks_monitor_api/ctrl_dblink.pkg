@@ -1,0 +1,214 @@
+create or replace package dblink_monitor_api.ctrl_dblink is
+
+  /*
+  * Function checks is the link active and end point available
+  */
+
+  FUNCTION is_db_link_active(p_owner    dblink_monitor.dblinks.owner%TYPE,
+                             p_db_link  dblink_monitor.dblinks.db_link%TYPE,
+                             p_username dblink_monitor.dblinks.username%TYPE)
+    RETURN BOOLEAN;
+
+  PROCEDURE check_db_link(p_owner    dblink_monitor.dblinks.owner%TYPE,
+                          p_db_link  dblink_monitor.dblinks.db_link%TYPE,
+                          p_username dblink_monitor.dblinks.username%TYPE);
+
+  /*
+  * Function runs one database link check from a select * from dba_db_links table
+  */
+
+  PROCEDURE run_db_link_check(p_owner    dblink_monitor.dblinks.owner%TYPE,
+                              p_db_link  dblink_monitor.dblinks.db_link%TYPE,
+                              p_username dblink_monitor.dblinks.username%TYPE);
+
+  /*
+  * Function runs all database links checks from a select * from dba_db_links table
+  */
+
+  PROCEDURE run_db_link_checks;
+
+  PROCEDURE disable_deleted_links;
+end;
+/
+create or replace package body dblink_monitor_api.ctrl_dblink is
+
+  FUNCTION is_db_link_active(p_owner    dblink_monitor.dblinks.owner%TYPE,
+                             p_db_link  dblink_monitor.dblinks.db_link%TYPE,
+                             p_username dblink_monitor.dblinks.username%TYPE)
+    RETURN BOOLEAN IS
+  
+    l_dblink dblink_monitor.dblinks%ROWTYPE := dblink_monitor_api.hlp_dblink.get_db_link(p_owner    => p_owner,
+                                                                                         p_db_link  => p_db_link,
+                                                                                         p_username => p_username);
+  BEGIN
+  
+    IF trim(l_dblink.db_link_id) IS NOT null THEN
+    
+      IF l_dblink.active = dblink_monitor_api.mdl_dblinks.c_active THEN
+        RETURN true;
+      ELSE
+        RETURN false;
+      END IF;
+    
+    ELSE
+    
+      RETURN false;
+    
+    END IF;
+  
+  END;
+
+  PROCEDURE check_db_link(p_owner    dblink_monitor.dblinks.owner%TYPE,
+                          p_db_link  dblink_monitor.dblinks.db_link%TYPE,
+                          p_username dblink_monitor.dblinks.username%TYPE) IS
+  
+    l_dblink dblink_monitor.dblinks%ROWTYPE := dblink_monitor_api.hlp_dblink.check_db_link(p_owner    => p_owner,
+                                                                                           p_db_link  => p_db_link,
+                                                                                           p_username => p_username);
+  
+    l_status NUMBER := 0;
+  
+    l_start_date DATE := SYSTIMESTAMP;
+  
+  BEGIN
+  
+    IF dblink_monitor_api.hlp_dblink.check_is_db_checker_exists(p_owner => p_owner) THEN
+    
+      DECLARE
+      
+        l_sql VARCHAR2(256) := 'SELECT status
+        FROM ' || p_owner || '.' ||
+                               dblink_monitor_api.hlp_dblink.c_dblink_checker_name;
+      
+      BEGIN
+      
+        EXECUTE IMMEDIATE l_sql
+          INTO l_status;
+      
+        IF l_status = 1 THEN
+        
+          DECLARE
+            l_end_date DATE := to_date(SYSDATE, 'YYYY-MM-DD HH24:MI:SS');
+          BEGIN
+          
+            dblink_monitor_api.hlp_dblink.make_active_db_link(p_owner               => p_owner,
+                                                              p_db_link             => p_db_link,
+                                                              p_username            => p_username,
+                                                              p_last_execution_time => dblink_monitor_api.hlp_dblink.get_execution_time(p_start_date => l_start_date));
+          
+          END;
+        END IF;
+      
+      EXCEPTION
+        WHEN others THEN
+          dblink_monitor_api.hlp_dblink.make_unactive_db_link(p_owner      => p_owner,
+                                                              p_db_link    => p_db_link,
+                                                              p_username   => p_username,
+                                                              p_last_error => dbms_utility.format_error_stack);
+        
+      END;
+    
+    ELSE
+    
+      dblink_monitor_api.hlp_dblink.make_unactive_db_link(p_owner      => p_owner,
+                                                          p_db_link    => p_db_link,
+                                                          p_username   => p_username,
+                                                          p_last_error => 'ERROR. DB link checker ' ||
+                                                                          p_owner || '.' ||
+                                                                          dblink_monitor_api.hlp_dblink.c_dblink_checker_name ||
+                                                                          '  not exists.');
+    END IF;
+  
+  END;
+
+  PROCEDURE run_db_link_check(p_owner    dblink_monitor.dblinks.owner%TYPE,
+                              p_db_link  dblink_monitor.dblinks.db_link%TYPE,
+                              p_username dblink_monitor.dblinks.username%TYPE) IS
+  
+    l_dblink dblink_monitor.dblinks%ROWTYPE := dblink_monitor_api.hlp_dblink.check_db_link(p_owner    => p_owner,
+                                                                                           p_db_link  => p_db_link,
+                                                                                           p_username => p_username);
+  BEGIN
+  
+    dblink_monitor_api.hlp_dblink.run_job(p_owner    => p_owner,
+                                          p_db_link  => p_db_link,
+                                          p_username => p_username);
+  
+  END;
+
+  PROCEDURE run_db_link_checks IS
+  
+    sr_dblinks SYS_REFCURSOR := dblink_monitor_api.hlp_dblink.get_db_links;
+  
+    TYPE t_dblinks IS TABLE OF dba_db_links%ROWTYPE INDEX BY PLS_INTEGER;
+  
+    l_dblinks t_dblinks;
+  BEGIN
+  
+    FETCH sr_dblinks BULK COLLECT
+      INTO l_dblinks;
+    CLOSE sr_dblinks;
+  
+    IF l_dblinks.count >= 1 THEN
+    
+      FOR i IN l_dblinks.FIRST .. l_dblinks.LAST LOOP
+      
+        IF NOT
+            dblink_monitor_api.hlp_dblink.check_is_job_exists(p_owner    => sys_context('userenv',
+                                                                                        'current_schema'),
+                                                              p_job_name => l_dblinks(i)
+                                                                            .username) THEN
+        
+          run_db_link_check(p_owner    => l_dblinks(i).owner,
+                            p_db_link  => l_dblinks(i).db_link,
+                            p_username => l_dblinks(i).username);
+        
+        END IF;
+      
+      END LOOP;
+    
+    END IF;
+  
+  END;
+
+  PROCEDURE disable_deleted_link(p_owner    dblink_monitor.dblinks.owner%TYPE,
+                                 p_db_link  dblink_monitor.dblinks.db_link%TYPE,
+                                 p_username dblink_monitor.dblinks.username%TYPE) IS
+  
+  BEGIN
+  
+    dblink_monitor_api.hlp_dblink.make_unactive_db_link(p_owner      => p_owner,
+                                                        p_db_link    => p_db_link,
+                                                        p_username   => p_username,
+                                                        p_last_error => 'ERROR. DB link was deleted from dba_db_links table.');
+  
+  END;
+
+  PROCEDURE disable_deleted_links IS
+  
+    sr_dblinks SYS_REFCURSOR := dblink_monitor_api.hlp_dblink.get_deleted_db_links;
+  
+    TYPE t_dblinks IS TABLE OF dba_db_links%ROWTYPE INDEX BY PLS_INTEGER;
+  
+    l_dblinks t_dblinks;
+  BEGIN
+  
+    FETCH sr_dblinks BULK COLLECT
+      INTO l_dblinks;
+    CLOSE sr_dblinks;
+  
+    IF l_dblinks.count >= 1 THEN
+    
+      FOR i IN l_dblinks.FIRST .. l_dblinks.LAST LOOP
+        disable_deleted_link(p_owner    => l_dblinks(i).owner,
+                             p_db_link  => l_dblinks(i).db_link,
+                             p_username => l_dblinks(i).username);
+      END LOOP;
+    
+    END IF;
+  
+  END;
+
+begin
+  null;
+end;
